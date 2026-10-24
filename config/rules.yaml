@@ -1,0 +1,4 @@
+refund_rules:
+  - required_preceding_tools:
+      - "query_order"
+    error_message: "尊敬的客户您好，为了保障您的资金安全，系统要求必须先核实订单信息才能办理退款。请您提供订单号，谢谢您的理解。"
