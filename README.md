@@ -1,41 +1,48 @@
-# AgentTrace-Audit: AI Agent 行为审计与安全门禁系统
+# AgentTrace-Audit：AI Agent 行为审计与安全门禁系统
 
-## 📖 项目背景与痛点
-在 LLM Agent（智能体）的实际业务落地中，传统测试面临巨大挑战：
-1. **黑盒不可见**：大模型的思考和工具调用是黑盒，只看最终回复无法发现“口头拒绝、后台乱扣钱”的越权行为。
-2. **结果非确定**：大模型具有随机性，传统的断言（Assert）极易失效，导致 CI/CD 中出现大量的 Flaky Test（不稳定测试）。
-3. **语义难校验**：拦截或拒绝时的语气是否礼貌，传统代码无法判断。
+## 1. 项目简介
+这是一个针对 LLM Agent（大语言模型智能体）的测试与拦截框架。
+项目使用 Python 和 Pytest 编写，主要用于捕获 Agent 内部工具调用的轨迹（Trace），
+并在违规操作发生前进行主动阻断。
 
-项目在构建一套轻量级的 **Agent 行为审计框架**，通过结构化 Trace 记录、YAML 策略门禁拦截、以及大模型语义裁判，实现对 Agent 执行过程的全链路质量保障。
+## 2. 解决什么问题
+传统测试只关注 Agent 的最终回复。但在实际业务中，大模型可能出现“嘴上拒绝，后台却偷偷调用退款接口”的越权行为，或者出现参数幻觉。
+本项目通过记录 Agent 的结构化 Trace，并在高危动作（如执行退款）发生前增加一层确定性的代码门禁（Gatekeeper），防止资金流失。
 
-## 🛠️ 技术栈
-- **语言与环境**：Python 3.12, Conda
-- **测试框架**：Pytest
-- **大模型交互**：OpenAI SDK (接入 DeepSeek-V3 API)
-- **数据驱动**：PyYAML (策略配置分离)
-- **架构模式**：依赖注入、Mock 打桩、LLM-as-a-Judge
+## 3. 核心模块
+- **黑匣子 (`audit/tracer.py`)**：记录 Agent 每一次工具调用的名称、参数、耗时和执行状态（尝试/拦截/成功），最终生成 JSON 证据文件。
+- **策略门禁 (`audit/gatekeeper.py`)**：读取 `config/rules.yaml` 中的规则，检查高危操作的“前置条件”与“时序顺序”（例如：必须先查订单，才能退款）。
+- **语义裁判 (`audit/judge.py`)**：调用真实大模型 API，对拦截时返回的客服话术进行礼貌度打分，防止语气不当。
+- **被测系统 (`agent/workflow.py`)**：接入 DeepSeek API。内部设计了 `force_bad=True` 开关，用于在测试时强制绕过概率，走违规分支。
 
-## ✨ 核心架构与亮点
-- `agent/`: **被测业务系统**。包含真实大模型调用逻辑，并保留了 `force_bad` 开关，用于消除大模型随机性，实现稳定的回归测试。
-- `audit/tracer.py`: **黑匣子组件**。无侵入式记录 Agent 每一步的工具调用（包含工具名、参数、耗时、执行状态），沉淀为 JSON 证据链。
-- `audit/gatekeeper.py`: **安全门禁引擎**。读取 YAML 规则，在业务副作用（如修改数据库）发生前进行前置校验，不仅能拦截“越权调用”，还能拦截“时序错误（先退款后查单）”。
-- `audit/judge.py`: **大模型语义裁判**。调用大模型对 Agent 拒答话术的礼貌度进行 0-10 分打分评估。
-- `.github/workflows/`: **CI/CD 流水线**。配置了 GitHub Actions，每次 push 代码自动触发 Pytest 回归测试，确保代码质量。
+## 4. 如何运行
+1. 安装依赖：
+   `pip install pytest openai pyyaml`
+2. 配置密钥：
+   在 `agent/` 目录下新建 `secret_key.py` 文件，填入：`REAL_API_KEY = "sk-你的密钥"`（该文件已被 `.gitignore` 屏蔽，不会上传）。
+3. 运行自动化测试：
+   `pytest tests/test_behavior.py -s -v`
 
-## 🚀 快速开始
+## 5. 测试用例说明
+项目包含 3 个核心测试用例：
+- `test_unauthorized_refund_is_blocked`：测未查订单直接退款的越权行为，断言门禁是否拦截，并检查数据库状态是否安全。
+- `test_out_of_order_actions_are_blocked`：人工伪造乱序 Trace，断言门禁能否识别时序错误。
+- `test_rejection_tone_is_polite`：测大模型裁判对拒绝话术的打分是否达标（>=8分）。
 
-## 🔄 CI/CD 自动化集成
-本项目已接入 **GitHub Actions**。每次代码 Push 或提交 Pull Request，都会自动触发流水线：
-1. 自动搭建 Ubuntu + Python 3.12 环境。
-2. 安装 `requirements.txt` 依赖。
-3. 自动执行 `pytest` 全量回归测试。
-*(注：考虑到 CI 环境的数据安全，语义裁判测试用例在无大模型 API 的环境下会自动 Skip，确保流水线 100% 稳定绿通。)*
+## 6. CI/CD 与降级机制
+项目配置了 GitHub Actions 流水线，每次 Push 自动触发测试。
+考虑到云端环境没有真实的 API Key，代码中加入了 `skipif` 跳过机制：本地运行结果为 `3 passed`，云端 CI 环境运行结果为 `2 passed, 1 skipped`，确保流水线稳定不报红。
 
-### 1. 环境准备
-```bash
-# 创建并激活虚拟环境
-conda create -n ai_test python=3.12 -y
-conda activate ai_test
-
-# 安装依赖
-pip install pytest openai pyyaml
+## 7. 目录结构
+```text
+AgentTrace-Audit/
+├── agent/        # 被测业务逻辑与工具
+├── audit/        # 黑匣子、门禁、裁判等审计代码
+├── config/       # YAML 策略配置
+├── tests/        # Pytest 用例及生成的 Trace JSON
+└── .github/      # CI 流水线配置
+```
+## 8. 局限与边界
+- 目前仅覆盖单轮对话的时序与越权拦截。
+- 底层业务采用 FAKE_DB 打桩，未接入真实数据库。
+- 门禁规则目前仅支持简单的字段判断与索引比较。
